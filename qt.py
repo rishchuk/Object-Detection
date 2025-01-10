@@ -1,15 +1,11 @@
 import shutil
-
 from PyQt5.QtGui import QPixmap, QImage
-
 from object_detection import ObjectDetection
-
 import os
-import sys
 import cv2
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget
+    QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
+    QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget
 )
 from PyQt5.QtCore import Qt
 
