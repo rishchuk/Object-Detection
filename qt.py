@@ -181,10 +181,3 @@ class DetectionApp(QMainWindow):
         if self.video_thread and self.video_thread.isRunning():
             self.video_thread.stop()
         event.accept()
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = DetectionApp()
-    window.show()
-    sys.exit(app.exec())

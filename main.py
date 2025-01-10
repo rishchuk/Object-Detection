@@ -1,7 +1,10 @@
-from object_detection import ObjectDetection
+import sys
+from PyQt5.QtWidgets import QApplication
+from qt import DetectionApp
 
-if __name__ == '__main__':
-    video_path = './data/cars.mp4'
-    output_path = f'output_{video_path.split("/")[-1]}'
-    tracker = ObjectDetection(model_name='yolov5su.pt', video=video_path, output_video=output_path)
-    tracker.run()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = DetectionApp()
+    window.show()
+    sys.exit(app.exec())
