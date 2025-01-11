@@ -1,3 +1,4 @@
+import csv
 import shutil
 from PyQt5.QtGui import QPixmap, QImage
 from object_detection import ObjectDetection
@@ -8,6 +9,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget
 )
 from PyQt5.QtCore import Qt
+from database import DB
 
 
 class DetectionApp(QMainWindow):
@@ -21,7 +23,13 @@ class DetectionApp(QMainWindow):
         self.detection_instance = None
         self.video_thread = None
         self.output_video_path = None
-
+        self.db_config = {
+            'host': os.getenv('DB_HOST'),
+            'port': int(os.getenv('DB_PORT', 3306)),
+            'user': os.getenv('DB_USER'),
+            'password': os.getenv('DB_PASSWORD'),
+            'database': os.getenv('DB_DATABASE')
+        }
         self.init_ui()
 
     def init_ui(self):
@@ -103,6 +111,10 @@ class DetectionApp(QMainWindow):
         self.video_tab.setLayout(self.video_layout)
         self.tabs.addTab(self.video_tab, "Video output")
 
+        export_button = QPushButton("Export trajectories")
+        export_button.clicked.connect(self.export_trajectories)
+        self.video_layout.addWidget(export_button)
+
         download_button = QPushButton("Download processed video")
         download_button.clicked.connect(self.download_processed)
         self.video_layout.addWidget(download_button)
@@ -132,21 +144,13 @@ class DetectionApp(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please select at least one type of object type to track.")
             return
 
-        db_config = {
-            'host': os.getenv('DB_HOST'),
-            'port': int(os.getenv('DB_PORT', 3306)),
-            'user': os.getenv('DB_USER'),
-            'password': os.getenv('DB_PASSWORD'),
-            'database': os.getenv('DB_DATABASE')
-        }
-
         self.output_video_path = f'output_{self.selected_video.split("/")[-1]}'
 
         self.detection_instance = ObjectDetection(
             model_name=self.selected_model,
             video=self.selected_video,
             output_video=f'output_{self.selected_video.split("/")[-1]}',
-            config=db_config,
+            config=self.db_config,
             flags=self.selected_flags
         )
 
@@ -172,6 +176,38 @@ class DetectionApp(QMainWindow):
                 QMessageBox.information(self, "Success", f"Video saved to: {save_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"An error occurred: {e}")
+
+    def export_trajectories(self):
+        if not self.selected_video:
+            QMessageBox.warning(self, "Warning", "Please select a video first.")
+            return
+
+        video_name = self.selected_video.split("/")[-1]
+
+        try:
+            db = DB(self.db_config)
+            video_id = db.get_video_id(video_name)
+
+            if not video_id:
+                QMessageBox.warning(self, "Warning", "No trajectories found for the selected video.")
+                return
+
+            trajectories = db.select_trajectories(video_id)
+            if not trajectories:
+                QMessageBox.information(self, "Info", "No trajectories found to export.")
+                return
+
+            save_path, _ = QFileDialog.getSaveFileName(self, "Save trajectories", "", "CSV files (*.csv)")
+            if save_path:
+                with open(save_path, mode="w", newline="") as file:
+                    writer = csv.writer(file)
+                    writer.writerow(["Object ID", "Class", "X", "Y", "Timestamp"])
+                    for row in trajectories:
+                        writer.writerow(row)
+
+                QMessageBox.information(self, "Success", f"Trajectories exported to: {save_path}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {e}")
 
     def closeEvent(self, event):
         if self.video_thread and self.video_thread.isRunning():

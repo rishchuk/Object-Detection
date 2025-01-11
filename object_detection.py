@@ -57,6 +57,8 @@ class ObjectDetection(QThread):
         self.db = DB(config)
         self.model = YOLO(model_name)
         self.model_name = model_name.split('/')[-1]
+        self.video_name = video.split('/')[-1]
+        self.video_id = self.db.register_video(self.video_name)
         self.cap = cv2.VideoCapture(video)
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -154,7 +156,8 @@ class ObjectDetection(QThread):
                             self.model.names[int(cls_ids[i])],
                             int(current_centers[i][0]),
                             int(current_centers[i][1]),
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            self.video_id
                         )
 
                 for i, center in enumerate(current_centers):
@@ -175,7 +178,8 @@ class ObjectDetection(QThread):
                             self.model.names[int(cls_ids[i])],
                             int(center[0]),
                             int(center[1]),
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            self.video_id
                         )
 
             for tracker_id, tracker in self.object_trackers.items():
