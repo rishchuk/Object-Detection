@@ -1,14 +1,16 @@
 import csv
+import random
 import shutil
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QBrush, QColor, QPen
 from object_detection import ObjectDetection
 import os
 import cv2
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
-    QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget
+    QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget, QGraphicsEllipseItem,
+    QGraphicsScene, QGraphicsView
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPointF
 from database import DB
 
 
@@ -119,6 +121,18 @@ class DetectionApp(QMainWindow):
         download_button.clicked.connect(self.download_processed)
         self.video_layout.addWidget(download_button)
 
+        self.csv_tab = QWidget()
+        self.csv_layout = QVBoxLayout()
+        self.load_csv_button = QPushButton("Load CSV")
+        self.load_csv_button.clicked.connect(self.load_csv)
+        self.csv_layout.addWidget(self.load_csv_button)
+
+        self.csv_display = QGraphicsView()
+        self.csv_layout.addWidget(self.csv_display)
+
+        self.csv_tab.setLayout(self.csv_layout)
+        self.tabs.addTab(self.csv_tab, "CSV Trajectories")
+
         main_layout.addWidget(self.tabs)
 
         central_widget = QWidget()
@@ -208,6 +222,59 @@ class DetectionApp(QMainWindow):
                 QMessageBox.information(self, "Success", f"Trajectories exported to: {save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred: {e}")
+
+    def load_csv(self):
+        file_dialog = QFileDialog()
+        file_path, _ = file_dialog.getOpenFileName(self, "Select CSV file", "", "CSV files (*.csv)")
+        if file_path:
+            try:
+                trajectories = []
+                with open(file_path, mode="r") as file:
+                    reader = csv.reader(file)
+                    next(reader)
+                    for row in reader:
+                        trajectories.append(row)
+
+                self.visualize_trajectories(trajectories)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"An error occurred while loading the CSV: {e}")
+
+    def visualize_trajectories(self, trajectories):
+        scene = QGraphicsScene()
+        self.csv_display.setScene(scene)
+
+        colors = {}
+        object_points = {}
+        for trajectory in trajectories:
+            object_id, x, y = trajectory[0], int(trajectory[2]), int(trajectory[3])
+
+            if object_id not in colors:
+                colors[object_id] = [random.randint(0, 255) for _ in range(3)]
+
+            if object_id not in object_points:
+                object_points[object_id] = []
+            object_points[object_id].append(QPointF(x, y))
+
+        for object_id, points in object_points.items():
+            if len(points) < 2:
+                continue
+
+            for i in range(1, len(points)):
+                start_point = points[i - 1]
+                end_point = points[i]
+                scene.addLine(start_point.x(), start_point.y(), end_point.x(), end_point.y(),
+                              QPen(QColor(*colors[object_id]), 2))
+
+            start_point = points[0]
+            end_point = points[-1]
+
+            scene.addEllipse(start_point.x() - 3, start_point.y() - 3, 7, 7, QPen(QColor(*colors[object_id])),
+                             QBrush(QColor(*colors[object_id])))
+
+            scene.addEllipse(end_point.x() - 3, end_point.y() - 3, 7, 7, QPen(QColor(*colors[object_id])),
+                             QBrush(QColor(*colors[object_id])))
+
+        self.csv_display.setScene(scene)
 
     def closeEvent(self, event):
         if self.video_thread and self.video_thread.isRunning():
