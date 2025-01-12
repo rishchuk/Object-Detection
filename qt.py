@@ -8,7 +8,7 @@ import cv2
 from PyQt5.QtWidgets import (
     QMainWindow, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QLabel, QCheckBox, QComboBox, QWidget, QMessageBox, QGridLayout, QTabWidget, QGraphicsEllipseItem,
-    QGraphicsScene, QGraphicsView
+    QGraphicsScene, QGraphicsView, QLineEdit
 )
 from PyQt5.QtCore import Qt, QPointF
 from database import DB
@@ -127,6 +127,34 @@ class DetectionApp(QMainWindow):
         self.load_csv_button.clicked.connect(self.load_csv)
         self.csv_layout.addWidget(self.load_csv_button)
 
+        self.csv_flags_layout = QGridLayout()
+        self.flag_checkboxes = {
+            "Person": QCheckBox("Person"),
+            "Bicycle": QCheckBox("Bicycle"),
+            "Car": QCheckBox("Car"),
+            "Motorcycle": QCheckBox("Motorcycle"),
+            "Airplane": QCheckBox("Airplane"),
+            "Bus": QCheckBox("Bus"),
+            "Train": QCheckBox("Train"),
+            "Truck": QCheckBox("Truck"),
+            "Boat": QCheckBox("Boat"),
+        }
+        row, col = 0, 0
+        for class_name, checkbox in self.flag_checkboxes.items():
+            checkbox.stateChanged.connect(self.update_csv_display)
+            self.csv_flags_layout.addWidget(checkbox, row, col)
+            col += 1
+            if col == 5:
+                col = 0
+                row += 1
+
+        self.csv_layout.addLayout(self.csv_flags_layout)
+
+        self.object_id_input = QLineEdit()
+        self.object_id_input.setPlaceholderText("Enter Object ID")
+        self.object_id_input.textChanged.connect(self.update_csv_display)
+        self.csv_layout.addWidget(self.object_id_input)
+
         self.csv_display = QGraphicsView()
         self.csv_layout.addWidget(self.csv_display)
 
@@ -228,16 +256,28 @@ class DetectionApp(QMainWindow):
         file_path, _ = file_dialog.getOpenFileName(self, "Select CSV file", "", "CSV files (*.csv)")
         if file_path:
             try:
-                trajectories = []
+                self.trajectories = []
                 with open(file_path, mode="r") as file:
                     reader = csv.reader(file)
                     next(reader)
                     for row in reader:
-                        trajectories.append(row)
+                        self.trajectories.append(row)
 
-                self.visualize_trajectories(trajectories)
+                self.update_csv_display()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while loading the CSV: {e}")
+
+    def update_csv_display(self):
+        selected_classes = [class_name.lower() for class_name, checkbox in self.flag_checkboxes.items() if checkbox.isChecked()]
+        selected_object_id = self.object_id_input.text()
+
+        filtered_trajectories = [
+            trajectory for trajectory in self.trajectories
+            if (not selected_classes or trajectory[1] in selected_classes) and
+               (not selected_object_id or trajectory[0] == selected_object_id)
+        ]
+
+        self.visualize_trajectories(filtered_trajectories)
 
     def visualize_trajectories(self, trajectories):
         scene = QGraphicsScene()
