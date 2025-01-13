@@ -128,7 +128,7 @@ class DetectionApp(QMainWindow):
         self.csv_layout.addWidget(self.load_csv_button)
 
         self.csv_flags_layout = QGridLayout()
-        self.flag_checkboxes = {
+        self.flag_csv_checkboxes = {
             "Person": QCheckBox("Person"),
             "Bicycle": QCheckBox("Bicycle"),
             "Car": QCheckBox("Car"),
@@ -140,7 +140,7 @@ class DetectionApp(QMainWindow):
             "Boat": QCheckBox("Boat"),
         }
         row, col = 0, 0
-        for class_name, checkbox in self.flag_checkboxes.items():
+        for class_name, checkbox in self.flag_csv_checkboxes.items():
             checkbox.stateChanged.connect(self.update_csv_display)
             self.csv_flags_layout.addWidget(checkbox, row, col)
             col += 1
@@ -268,7 +268,7 @@ class DetectionApp(QMainWindow):
                 QMessageBox.critical(self, "Error", f"An error occurred while loading the CSV: {e}")
 
     def update_csv_display(self):
-        selected_classes = [class_name.lower() for class_name, checkbox in self.flag_checkboxes.items() if checkbox.isChecked()]
+        selected_classes = [class_name.lower() for class_name, checkbox in self.flag_csv_checkboxes.items() if checkbox.isChecked()]
         selected_object_id = self.object_id_input.text()
 
         filtered_trajectories = [
