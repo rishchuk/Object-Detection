@@ -4,8 +4,61 @@ import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
 from ultralytics import YOLO
 from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
 from datetime import datetime
 from database import DB
+
+
+class KalmanFilter:
+    def __init__(self):
+        self.dimensions = 2
+        self.time_step = 1.0
+        self.state_transition = np.eye(2 * self.dimensions)
+        self.state_transition[:self.dimensions, self.dimensions:] = self.time_step * np.eye(self.dimensions)
+        self.observation_matrix = np.eye(self.dimensions, 2 * self.dimensions)
+
+        self.position_noise_factor = 1.0 / 20
+        self.velocity_noise_factor = 1.0 / 160
+
+    def initiate(self, measurement):
+        initial_state = np.zeros(4)
+        initial_state[:2] = measurement
+        std_dev = np.array([
+            2 * self.position_noise_factor * measurement[1],
+            2 * self.position_noise_factor * measurement[1],
+            10 * self.velocity_noise_factor * measurement[1],
+            10 * self.velocity_noise_factor * measurement[1]
+        ])
+        covariance_matrix = np.diag(std_dev ** 2)
+        return initial_state, covariance_matrix
+
+    def predict(self, state, covariance):
+        predicted_state = self.state_transition @ state
+        std_dev = np.array([
+            self.position_noise_factor * state[1],
+            self.position_noise_factor * state[1],
+            self.velocity_noise_factor * state[1],
+            self.velocity_noise_factor * state[1]
+        ])
+        process_covariance = np.diag(std_dev ** 2)
+        predicted_covariance = self.state_transition @ covariance @ self.state_transition.T + process_covariance
+        return predicted_state, predicted_covariance
+
+    def update(self, state, covariance, measurement):
+        projected_state = self.observation_matrix @ state
+        projected_covariance = self.observation_matrix @ covariance @ self.observation_matrix.T
+
+        position_noise_std = self.position_noise_factor * state[1]
+        measurement_noise_covariance = np.diag([position_noise_std ** 2, position_noise_std ** 2])
+
+        innovation_covariance = projected_covariance + measurement_noise_covariance
+        kalman_gain = covariance @ self.observation_matrix.T @ np.linalg.inv(innovation_covariance)
+
+        innovation = measurement - projected_state
+        updated_state = state + kalman_gain @ innovation
+        updated_covariance = covariance - kalman_gain @ projected_covariance @ kalman_gain.T
+
+        return updated_state, updated_covariance
 
 
 class ObjectTracker:
@@ -15,22 +68,22 @@ class ObjectTracker:
         self.cls_name = cls_name
         self.first_visible_frame = first_visible_frame
         self.last_seen_frame = first_visible_frame
-        self.occlusion_count = 0
         self.trajectory = [center]
         self.is_active = True
         self.color = self.generate_unique_color()
 
+        self.kf = KalmanFilter()
+        self.state, self.covariance = self.kf.initiate(np.array(center))
+
     def update(self, new_center, current_frame):
+        self.state, self.covariance = self.kf.update(self.state, self.covariance, np.array(new_center))
         self.center = new_center
         self.last_seen_frame = current_frame
         self.trajectory.append(new_center)
-        self.occlusion_count = 0
-        self.is_active = True
 
-    def mark_occluded(self):
-        self.occlusion_count += 1
-        if self.occlusion_count > 10:
-            self.is_active = False
+    def predict(self):
+        self.state, self.covariance = self.kf.predict(self.state, self.covariance)
+        return int(self.state[0]), int(self.state[1])
 
     @staticmethod
     def generate_unique_color():
@@ -48,9 +101,7 @@ class ObjectTracker:
 class ObjectDetection(QThread):
     update_frame = pyqtSignal(np.ndarray)
 
-    DISTANCE_THRESHOLD = 30
-    MAX_OCCLUSION_FRAMES = 20
-    OVERLAP_THRESHOLD = 0.3
+    DISTANCE_THRESHOLD = 50
 
     def __init__(self, model_name, video, output_video, config, flags):
         super().__init__()
@@ -76,35 +127,25 @@ class ObjectDetection(QThread):
         x1, y1, x2, y2 = box
         return (x1 + x2) // 2, (y1 + y2) // 2
 
-    @staticmethod
-    def calculate_iou(box1, box2):
-        x1 = max(box1[0], box2[0])
-        y1 = max(box1[1], box2[1])
-        x2 = min(box1[2], box2[2])
-        y2 = min(box1[3], box2[3])
+    def create_new_tracker(self, i, current_centers, cls_ids):
+        self.object_counter += 1
+        new_tracker = ObjectTracker(
+            self.object_counter,
+            current_centers[i],
+            self.model.names[int(cls_ids[i])],
+            self.current_frame
+        )
+        self.object_trackers[self.object_counter] = new_tracker
 
-        intersection = max(0, x2 - x1) * max(0, y2 - y1)
-
-        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-
-        union = area1 + area2 - intersection
-
-        return intersection / union if union > 0 else 0
-
-    def detect_occlusions(self, boxes):
-        occlusions = {}
-        for i in range(len(boxes)):
-            for j in range(i + 1, len(boxes)):
-                iou = self.calculate_iou(boxes[i], boxes[j])
-                if iou > self.OVERLAP_THRESHOLD:
-                    if i not in occlusions:
-                        occlusions[i] = []
-                    if j not in occlusions:
-                        occlusions[j] = []
-                    occlusions[i].append(j)
-                    occlusions[j].append(i)
-        return occlusions
+        self.db.add_trajectory(
+            self.model_name,
+            self.object_counter,
+            self.model.names[int(cls_ids[i])],
+            int(current_centers[i][0]),
+            int(current_centers[i][1]),
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            self.video_id
+        )
 
     def run(self):
         while self.running:
@@ -113,7 +154,6 @@ class ObjectDetection(QThread):
                 break
 
             self.current_frame += 1
-
             result = self.model(source=frame, verbose=False)[0]
 
             boxes = result.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
@@ -123,31 +163,20 @@ class ObjectDetection(QThread):
             boxes = boxes[indices]
             cls_ids = cls_ids[indices]
 
-            occlusions = self.detect_occlusions(boxes)
-
             current_centers = np.array([self.calculate_center(box) for box in boxes])
 
-            for tracker_id in list(self.object_trackers.keys()):
-                tracker = self.object_trackers[tracker_id]
-                if not tracker.is_active:
-                    del self.object_trackers[tracker_id]
-                    continue
-                tracker.mark_occluded()
+            prev_centers = np.array(
+                [tracker.predict() for tracker in self.object_trackers.values() if tracker.is_active]
+            )
 
-            if len(current_centers) > 0:
-                prev_centers = np.array(
-                    [tracker.center for tracker in self.object_trackers.values() if tracker.is_active])
+            if len(current_centers) > 0 and len(prev_centers) > 0:
+                distances = cdist(current_centers, prev_centers)
+                row_indices, col_indices = linear_sum_assignment(distances)
 
-                if len(prev_centers) > 0:
-                    distances = cdist(current_centers, prev_centers)
-                    matched_indices = np.where(distances < self.DISTANCE_THRESHOLD)
-
-                    for i, j in zip(matched_indices[0], matched_indices[1]):
+                for i, j in zip(row_indices, col_indices):
+                    if distances[i, j] < self.DISTANCE_THRESHOLD:
                         active_tracker_ids = [tid for tid, tracker in self.object_trackers.items() if tracker.is_active]
                         tracker_id = active_tracker_ids[j]
-
-                        if i in occlusions:
-                            print(f"Detected occlusion for object {tracker_id}")
 
                         self.object_trackers[tracker_id].update(current_centers[i], self.current_frame)
                         self.db.add_trajectory(
@@ -159,45 +188,27 @@ class ObjectDetection(QThread):
                             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                             self.video_id
                         )
-
-                for i, center in enumerate(current_centers):
-                    if not any(np.linalg.norm(np.array(center) - np.array(prev_center)) < self.DISTANCE_THRESHOLD
-                               for prev_center in prev_centers):
-                        self.object_counter += 1
-                        new_tracker = ObjectTracker(
-                            self.object_counter,
-                            center,
-                            self.model.names[int(cls_ids[i])],
-                            self.current_frame
-                        )
-                        self.object_trackers[self.object_counter] = new_tracker
-
-                        self.db.add_trajectory(
-                            self.model_name,
-                            self.object_counter,
-                            self.model.names[int(cls_ids[i])],
-                            int(center[0]),
-                            int(center[1]),
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                            self.video_id
-                        )
+                    else:
+                        self.create_new_tracker(i, current_centers, cls_ids)
+            elif len(current_centers) > 0:
+                for i in range(len(current_centers)):
+                    self.create_new_tracker(i, current_centers, cls_ids)
 
             for tracker_id, tracker in self.object_trackers.items():
                 if tracker.is_active:
-                    x, y = tracker.center
+                    x, y = tracker.predict()
+                    if not (0 <= x < self.frame_width and 0 <= y < self.frame_height):
+                        tracker.is_active = False
+                        continue
+
                     cv2.putText(frame, f'ID: {tracker_id}', (x, y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                     if len(tracker.trajectory) > 1:
                         for i in range(1, len(tracker.trajectory)):
-                            cv2.line(
-                                frame, tracker.trajectory[i - 1],
-                                tracker.trajectory[i], tracker.color, 2
-                            )
-
-                        cv2.circle(
-                            frame, tracker.trajectory[-1], 3, tracker.color, -1
-                        )
+                            cv2.line(frame, tracker.trajectory[i - 1],
+                                     tracker.trajectory[i], tracker.color, 2)
+                        cv2.circle(frame, tracker.trajectory[-1], 3, tracker.color, -1)
 
             self.out.write(frame)
             self.update_frame.emit(frame)
